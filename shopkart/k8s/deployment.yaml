@@ -1,0 +1,327 @@
+################################################################################
+# ShopKart — Kubernetes Production Deployment
+# Designed to handle 100M customers with horizontal pod autoscaling
+################################################################################
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: shopkart
+
+---
+# ===== API GATEWAY =====
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  namespace: shopkart
+  labels:
+    app: api-gateway
+    tier: gateway
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: api-gateway
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 2
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/actuator/prometheus"
+        prometheus.io/port: "8000"
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: api-gateway
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: api-gateway
+          image: shopkart/api-gateway:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+          env:
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: shopkart-secrets
+                  key: jwt-secret
+            - name: SPRING_REDIS_HOST
+              value: "redis-cluster"
+            - name: SPRING_REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: shopkart-secrets
+                  key: redis-password
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+  namespace: shopkart
+spec:
+  selector:
+    app: api-gateway
+  ports:
+    - port: 80
+      targetPort: 8000
+  type: LoadBalancer
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api-gateway-hpa
+  namespace: shopkart
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api-gateway
+  minReplicas: 4
+  maxReplicas: 30
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 70
+
+---
+# ===== USER SERVICE =====
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+  namespace: shopkart
+spec:
+  replicas: 6
+  selector:
+    matchLabels:
+      app: user-service
+  template:
+    metadata:
+      labels:
+        app: user-service
+    spec:
+      containers:
+        - name: user-service
+          image: shopkart/user-service:latest
+          ports:
+            - containerPort: 8081
+          resources:
+            requests:
+              memory: "768Mi"
+              cpu: "500m"
+            limits:
+              memory: "1.5Gi"
+              cpu: "2000m"
+          env:
+            - name: SPRING_DATASOURCE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: shopkart-db-secrets
+                  key: user-service-url
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: shopkart-secrets
+                  key: jwt-secret
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8081
+            initialDelaySeconds: 25
+            periodSeconds: 10
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: user-service-hpa
+  namespace: shopkart
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: user-service
+  minReplicas: 6
+  maxReplicas: 50
+
+---
+# ===== PRODUCT SERVICE =====
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: product-service
+  namespace: shopkart
+spec:
+  replicas: 8   # Higher replicas — most read traffic
+  selector:
+    matchLabels:
+      app: product-service
+  template:
+    metadata:
+      labels:
+        app: product-service
+    spec:
+      containers:
+        - name: product-service
+          image: shopkart/product-service:latest
+          ports:
+            - containerPort: 8082
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "750m"
+            limits:
+              memory: "2Gi"
+              cpu: "2000m"
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: product-service-hpa
+  namespace: shopkart
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: product-service
+  minReplicas: 8
+  maxReplicas: 100   # Scale to 100 during Big Billion Days!
+
+---
+# ===== CART SERVICE =====
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cart-service
+  namespace: shopkart
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: cart-service
+  template:
+    metadata:
+      labels:
+        app: cart-service
+    spec:
+      containers:
+        - name: cart-service
+          image: shopkart/cart-service:latest
+          ports:
+            - containerPort: 8083
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: cart-service-hpa
+  namespace: shopkart
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: cart-service
+  minReplicas: 5
+  maxReplicas: 60
+
+---
+# ===== ORDER SERVICE =====
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service
+  namespace: shopkart
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: order-service
+  template:
+    metadata:
+      labels:
+        app: order-service
+    spec:
+      containers:
+        - name: order-service
+          image: shopkart/order-service:latest
+          ports:
+            - containerPort: 8084
+          resources:
+            requests:
+              memory: "768Mi"
+              cpu: "500m"
+            limits:
+              memory: "1.5Gi"
+              cpu: "2000m"
+---
+# ===== SECRETS =====
+apiVersion: v1
+kind: Secret
+metadata:
+  name: shopkart-secrets
+  namespace: shopkart
+type: Opaque
+stringData:
+  jwt-secret: "shopkart-jwt-secret-key-must-be-256-bits-or-longer-for-hs256"
+  redis-password: "redis123_prod_change_this"
+  razorpay-key-id: "rzp_live_xxxx"
+  razorpay-key-secret: "xxxx"
+
+---
+# ===== CONFIG MAP =====
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shopkart-config
+  namespace: shopkart
+data:
+  kafka-bootstrap-servers: "kafka-cluster:9092"
+  eureka-server-url: "http://eureka:8761/eureka/"
+  elasticsearch-uri: "http://elasticsearch:9200"
+  redis-cluster-host: "redis-cluster"
+  redis-cluster-port: "6379"

@@ -1,0 +1,120 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: user-service
+
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/shopkart_users}
+    username: ${SPRING_DATASOURCE_USERNAME:shopkart}
+    password: ${SPRING_DATASOURCE_PASSWORD:shopkart123}
+    hikari:
+      minimum-idle: 10
+      maximum-pool-size: 50          # High pool for 100M users
+      idle-timeout: 30000
+      connection-timeout: 30000
+      max-lifetime: 1800000
+      pool-name: ShopKartUserPool
+
+  jpa:
+    hibernate:
+      ddl-auto: validate              # Use Flyway in prod, not ddl-auto
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: false
+        jdbc:
+          batch_size: 50              # Batch inserts for performance
+          order_inserts: true
+          order_updates: true
+        query:
+          in_clause_parameter_padding: true
+    show-sql: false
+    open-in-view: false               # CRITICAL: always false for performance
+
+  data:
+    redis:
+      host: ${SPRING_REDIS_HOST:localhost}
+      port: ${SPRING_REDIS_PORT:6379}
+      password: ${SPRING_REDIS_PASSWORD:redis123}
+      timeout: 2000
+      lettuce:
+        pool:
+          max-active: 50
+          max-idle: 20
+          min-idle: 5
+          max-wait: 1000
+
+  kafka:
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      acks: all                        # Wait for all replicas
+      retries: 3
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 1
+    consumer:
+      group-id: user-service
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "com.shopkart.common.events"
+    listener:
+      concurrency: 3                   # 3 threads per consumer
+
+# JWT Configuration
+jwt:
+  secret: ${JWT_SECRET:shopkart-jwt-secret-key-must-be-256-bits-long-at-minimum}
+  access-token-expiry: 900000         # 15 minutes
+  refresh-token-expiry: 604800000     # 7 days
+
+# Eureka Service Discovery
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_CLIENT_SERVICEURL_DEFAULTZONE:http://localhost:8761/eureka/}
+    registry-fetch-interval-seconds: 15
+  instance:
+    prefer-ip-address: true
+    lease-renewal-interval-in-seconds: 10
+
+# Actuator / Health
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+      probes:
+        enabled: true
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+
+# Notification
+notification:
+  email:
+    provider: ses
+    from: noreply@shopkart.com
+    enabled: ${NOTIFICATION_EMAIL_ENABLED:false}   # Disable in dev
+  sms:
+    enabled: ${NOTIFICATION_SMS_ENABLED:false}
+
+# Cache config
+spring.cache:
+  type: redis
+  redis:
+    time-to-live: 600000              # 10 minutes
+
+logging:
+  level:
+    com.shopkart: INFO
+    org.hibernate.SQL: WARN
+    org.springframework.security: WARN
