@@ -24,6 +24,7 @@ public class CartService {
     private static final int MAX_ITEMS_PER_CART = 50;
     private static final int MAX_QUANTITY_PER_ITEM = 22; //20
 
+    private static final int MAX_QUANTITY_PER_ITEM = 24;
     // ===== CART OPERATIONS =====
 
     public Cart getCart(Long userId) {
