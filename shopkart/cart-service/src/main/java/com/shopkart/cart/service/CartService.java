@@ -22,7 +22,7 @@ public class CartService {
     private static final String CART_KEY_PREFIX = "cart:user:";
     private static final long CART_TTL_DAYS = 30;
     private static final int MAX_ITEMS_PER_CART = 50;
-    private static final int MAX_QUANTITY_PER_ITEM = 20;
+    private static final int MAX_QUANTITY_PER_ITEM = 22; //20
 
     // ===== CART OPERATIONS =====
 
